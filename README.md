@@ -26,6 +26,22 @@ Each canvas is a Three.js texture on a `PlaneGeometry`. Planes are stacked along
 
 Drag to orbit. The slice slider keeps frames near that second opaque and fades the rest, so the whole volume stays slightly translucent. **Show up to** hides frames after the chosen second.
 
+## Motion walker
+
+**Follow motion** does not start on upload. It runs a genetic algorithm on the frames you just sampled. Pause, resume, or step a generation. A new video clears the run. Orbit and both time sliders keep working; **Show up to** clips the path with the stack.
+
+A walker is a path from the first frame to the last. The genome is a start point plus one step per frame, in normalized image space (`u` left to right, `v` top to bottom), so mutation bends the route instead of scattering it. Each point sits on that frame's plane.
+
+Consecutive frames are reduced to a coarse grayscale grid (long edge 40) and differenced. That motion field is just pixel change, not a model.
+
+Defaults are a population of 64, 4 elites, tournament size 3, and about one generation every 120 ms. The best route is a bright line through the cube; the next 4 walkers are faint trails. The readout is the generation number and that generation's best fitness.
+
+Fitness is higher when the path follows motion:
+
+- add the motion at the midpoint of each step (bilinear sample of the absolute grayscale difference, 0–1)
+- subtract 18 × the sum of squared step lengths beyond 0.02
+- subtract 1.5 × how far points sit outside the frame
+
 ## Deploy
 
 GitHub Actions (`.github/workflows/deploy-pages.yml`) builds `dist/` and deploys it to GitHub Pages on pushes to `main`.

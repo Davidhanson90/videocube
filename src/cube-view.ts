@@ -2,17 +2,22 @@ import { LitElement, css, html } from "lit";
 import { customElement } from "lit/decorators.js";
 import {
   BoxGeometry,
+  BufferGeometry,
   CanvasTexture,
   DoubleSide,
   EdgesGeometry,
+  Float32BufferAttribute,
   Group,
   LinearFilter,
+  Line,
   LineBasicMaterial,
   LineSegments,
   Mesh,
   MeshBasicMaterial,
   PerspectiveCamera,
   PlaneGeometry,
+  Points,
+  PointsMaterial,
   Scene,
   SRGBColorSpace,
   WebGLRenderer,
@@ -20,6 +25,7 @@ import {
 } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import type { SampledFrame } from "./sample-frames";
+import type { WalkerTrail } from "./walker-ga";
 
 interface Slice {
   mesh: Mesh;
@@ -64,6 +70,10 @@ export class CubeView extends LitElement {
   private highlight = 0;
   private cutoff = Number.POSITIVE_INFINITY;
   private sigma = 1;
+  private planeW = 1;
+  private planeH = 1;
+  private trailData: readonly WalkerTrail[] = [];
+  private trailObjects: Array<Line | Points> = [];
 
   protected override shouldUpdate(): boolean {
     return !this.booted;
@@ -136,6 +146,8 @@ export class CubeView extends LitElement {
     const n = frames.length;
     const depth = (n - 1) * GAP;
 
+    this.planeW = planeW;
+    this.planeH = planeH;
     this.geometry = new PlaneGeometry(planeW, planeH);
     frames.forEach((frame, i) => {
       const texture = new CanvasTexture(frame.canvas);
@@ -185,6 +197,13 @@ export class CubeView extends LitElement {
   setCutoff(time: number): void {
     this.cutoff = time;
     this.applyLook();
+    this.rebuildTrails();
+  }
+
+  /** Best path plus a few faint runners-up, one point per frame, on that frame's plane. */
+  setWalkerTrails(trails: readonly WalkerTrail[]): void {
+    this.trailData = trails;
+    this.rebuildTrails();
   }
 
   private resize(): void {
@@ -212,7 +231,73 @@ export class CubeView extends LitElement {
     }
   }
 
+
+  private disposeTrailObjects(): void {
+    const geos = new Set<BufferGeometry>();
+    for (const obj of this.trailObjects) {
+      geos.add(obj.geometry);
+      const material = obj.material;
+      if (!Array.isArray(material)) material.dispose();
+      this.stack.remove(obj);
+    }
+    for (const geo of geos) geo.dispose();
+    this.trailObjects = [];
+  }
+
+  private rebuildTrails(): void {
+    this.disposeTrailObjects();
+    if (this.trailData.length === 0 || this.slices.length === 0) return;
+    for (const trail of this.trailData) {
+      const count = Math.min(this.slices.length, trail.u.length, trail.v.length);
+      const positions: number[] = [];
+      for (let i = 0; i < count; i++) {
+        const slice = this.slices[i]!;
+        if (slice.time > this.cutoff + 1e-3) break;
+        const u = clampTrail(trail.u[i] ?? 0);
+        const v = clampTrail(trail.v[i] ?? 0);
+        positions.push((u - 0.5) * this.planeW, (0.5 - v) * this.planeH, slice.mesh.position.z);
+      }
+      const verts = positions.length / 3;
+      if (verts < 1) continue;
+      const geometry = new BufferGeometry();
+      geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+      const best = trail.role === "best";
+      if (verts >= 2) {
+        const material = new LineBasicMaterial({
+          color: best ? 0xffe56a : 0x9ec2ff,
+          transparent: true,
+          opacity: best ? 1 : 0.35,
+          depthWrite: true
+        });
+        const line = new Line(geometry, material);
+        line.renderOrder = best ? 1001 : 1000;
+        this.stack.add(line);
+        this.trailObjects.push(line);
+      }
+      if (best) {
+        const dots = new Points(
+          geometry,
+          new PointsMaterial({
+            color: 0xfff6d0,
+            size: 6,
+            sizeAttenuation: false,
+            transparent: true,
+            opacity: 0.95,
+            depthWrite: true
+          })
+        );
+        dots.renderOrder = 1002;
+        this.stack.add(dots);
+        this.trailObjects.push(dots);
+      } else if (verts < 2) {
+        geometry.dispose();
+      }
+    }
+  }
+
   private disposeStack(): void {
+    this.trailData = [];
+    this.disposeTrailObjects();
     for (const slice of this.slices) {
       slice.material.map?.dispose();
       slice.material.dispose();
@@ -229,6 +314,12 @@ export class CubeView extends LitElement {
       this.bounds = null;
     }
   }
+}
+
+function clampTrail(value: number): number {
+  if (value < -0.25) return -0.25;
+  if (value > 1.25) return 1.25;
+  return value;
 }
 
 declare global {

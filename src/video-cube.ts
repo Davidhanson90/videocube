@@ -3,6 +3,16 @@ import { customElement, query, state } from "lit/decorators.js";
 import "./cube-view";
 import type { CubeView } from "./cube-view";
 import { SampleCancelled, sampleVideo, type SampledVideo } from "./sample-frames";
+import { buildMotionField, type MotionField } from "./motion-field";
+import { WALKER_TICK_MS, WalkerPopulation, type WalkerSnapshot } from "./walker-ga";
+
+function formatFitness(value: number): string {
+  if (!Number.isFinite(value)) return "—";
+  const abs = Math.abs(value);
+  if (abs >= 100) return value.toFixed(0);
+  if (abs >= 10) return value.toFixed(1);
+  return value.toFixed(2);
+}
 
 function formatClock(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
@@ -99,6 +109,32 @@ export class VideoCube extends LitElement {
       font-variant-numeric: tabular-nums;
       color: #9aa8b8;
     }
+    button {
+      font: inherit;
+      color: #e7edf4;
+      background: #1a2330;
+      border: 1px solid #2c3a4d;
+      border-radius: 8px;
+      padding: 6px 12px;
+      cursor: pointer;
+    }
+    button.primary {
+      background: #24344a;
+      border-color: #3d5c86;
+    }
+    button.on {
+      background: #1d3a2a;
+      border-color: #3d7a52;
+    }
+    button:disabled {
+      opacity: 0.45;
+      cursor: default;
+    }
+    .ga-readout {
+      font-variant-numeric: tabular-nums;
+      color: #c5d0dc;
+      font-size: 0.88rem;
+    }
     cube-view {
       min-height: 0;
     }
@@ -120,11 +156,18 @@ export class VideoCube extends LitElement {
   @state() private status = "";
   @state() private error = "";
   @state() private dragOver = false;
+  @state() private followOn = false;
+  @state() private playing = false;
+  @state() private gaGeneration = 0;
+  @state() private bestFitness = 0;
 
   @query("cube-view") private view?: CubeView;
   @query("video") private video?: HTMLVideoElement;
 
   private generation = 0;
+  private motion: MotionField | null = null;
+  private solver: WalkerPopulation | null = null;
+  private timer = 0;
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -138,6 +181,7 @@ export class VideoCube extends LitElement {
     this.removeEventListener("dragleave", this.onDragLeave);
     this.removeEventListener("drop", this.onDrop);
     this.generation += 1;
+    this.stopTimer();
     super.disconnectedCallback();
   }
 
@@ -152,7 +196,7 @@ export class VideoCube extends LitElement {
       <div class="panel ${this.dragOver ? "over" : ""}">
         <div>
           <h1>videocube</h1>
-          <p class="hint">Drop a video, drag to orbit, slider to slice time.</p>
+          <p class="hint">Drop a video, drag to orbit, slider to slice time. Follow motion evolves a path along movement in the shot.</p>
         </div>
         <div class="row">
           <label class="file">
@@ -195,6 +239,22 @@ export class VideoCube extends LitElement {
             />
             <span class="clock">${formatClock(this.cutoff)}</span>
           </label>
+        </div>
+        <div class="row">
+          <button
+            type="button"
+            class=${this.playing ? "on" : "primary"}
+            @click=${this.onFollow}
+            ?disabled=${!this.canWalk()}
+          >
+            ${this.playing ? "Pause" : this.followOn ? "Resume" : "Follow motion"}
+          </button>
+          <button type="button" @click=${this.onStep} ?disabled=${!this.canWalk()}>Step</button>
+          ${this.followOn
+            ? html`<span class="ga-readout">
+                Generation ${this.gaGeneration} · best ${formatFitness(this.bestFitness)}
+              </span>`
+            : html`<span class="meta">Follow motion tracks a subject through the stack.</span>`}
         </div>
         ${this.error
           ? html`<p class="status error">${this.error}</p>`
@@ -245,8 +305,64 @@ export class VideoCube extends LitElement {
     this.view?.setCutoff(this.cutoff);
   }
 
+  private canWalk(): boolean {
+    return this.ready && (this.motion?.layers.length ?? 0) > 0 && !this.sampling;
+  }
+
+  private onFollow(): void {
+    if (!this.canWalk() || !this.motion) return;
+    if (this.playing) {
+      this.playing = false;
+      this.stopTimer();
+      return;
+    }
+    this.followOn = true;
+    if (!this.solver) this.solver = new WalkerPopulation(this.motion);
+    if (this.solver.generation === 0) this.publish(this.solver.step());
+    this.playing = true;
+    this.startTimer();
+  }
+
+  private onStep(): void {
+    if (!this.canWalk() || !this.motion) return;
+    this.followOn = true;
+    if (!this.solver) this.solver = new WalkerPopulation(this.motion);
+    this.publish(this.solver.step());
+  }
+
+  private startTimer(): void {
+    this.stopTimer();
+    this.timer = window.setInterval(() => {
+      if (!this.solver || !this.playing) return;
+      this.publish(this.solver.step());
+    }, WALKER_TICK_MS);
+  }
+
+  private stopTimer(): void {
+    if (this.timer) window.clearInterval(this.timer);
+    this.timer = 0;
+  }
+
+  private publish(snap: WalkerSnapshot): void {
+    this.gaGeneration = snap.generation;
+    this.bestFitness = snap.bestFitness;
+    this.view?.setWalkerTrails(snap.trails);
+  }
+
+  private resetWalker(): void {
+    this.stopTimer();
+    this.playing = false;
+    this.followOn = false;
+    this.solver = null;
+    this.motion = null;
+    this.gaGeneration = 0;
+    this.bestFitness = 0;
+    this.view?.setWalkerTrails([]);
+  }
+
   private async loadFile(file: File): Promise<void> {
     const id = ++this.generation;
+    this.resetWalker();
     this.error = "";
     this.status = "Reading video…";
     this.sampling = true;
@@ -293,6 +409,12 @@ export class VideoCube extends LitElement {
     this.view?.setFrames(sampled.frames);
     this.view?.setHighlight(this.highlight);
     this.view?.setCutoff(Math.max(this.cutoff, last));
+    this.motion = buildMotionField(sampled.frames);
+    this.solver = null;
+    this.followOn = false;
+    this.playing = false;
+    this.gaGeneration = 0;
+    this.bestFitness = 0;
     this.ready = true;
     this.sampling = false;
     this.status = "";
@@ -301,6 +423,7 @@ export class VideoCube extends LitElement {
 
   private fail(id: number, message: string): void {
     if (id !== this.generation) return;
+    this.resetWalker();
     this.sampling = false;
     this.ready = false;
     this.status = "";
