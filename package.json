@@ -1,0 +1,31 @@
+{
+  "name": "videocube",
+  "version": "1.0.0",
+  "description": "Upload a video, stack one frame per second into a 3D cuboid, and slice through time. All in the browser.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Davidhanson90/videocube.git"
+  },
+  "homepage": "https://davidhanson90.github.io/videocube/",
+  "author": "David Graville",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "dependencies": {
+    "lit": "3.3.3",
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "@types/three": "0.186.0",
+    "typescript": "5.9.3",
+    "vite": "8.3.2"
+  }
+}

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="videocube — stack one frame per second of a video into a 3D cuboid and slice through time in the browser."
+    />
+    <title>videocube</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #0e1116;
+        color: #e7edf4;
+      }
+      video-cube {
+        display: block;
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <video-cube></video-cube>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
